@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lançador de Despesas</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0e1621;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    color: #fff;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #17212b;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #0e1621;
+    flex-shrink: 0;
+  }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #E65100;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px; flex-shrink: 0;
+  }
+  .header-info .name { font-weight: 600; font-size: 15px; }
+  .header-info .status { font-size: 12px; color: #5cb85c; }
+  .header-actions { margin-left: auto; display: flex; gap: 10px; }
+  .btn-report {
+    background: #E65100; color: #fff; border: none;
+    border-radius: 8px; padding: 6px 12px; font-size: 12px;
+    cursor: pointer; font-weight: 600;
+  }
+  .btn-report:hover { background: #bf360c; }
+
+  /* ── Chat ── */
+  .chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .bubble {
+    max-width: 78%;
+    padding: 8px 12px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.45;
+    word-break: break-word;
+    animation: fadeIn .15s ease;
+  }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+
+  .bubble.bot {
+    background: #17212b;
+    border-bottom-left-radius: 4px;
+    align-self: flex-start;
+    color: #e8e8e8;
+  }
+  .bubble.user {
+    background: #2b5278;
+    border-bottom-right-radius: 4px;
+    align-self: flex-end;
+    color: #fff;
+  }
+  .bubble .time {
+    font-size: 10px; color: #8a8a8a; margin-top: 3px; text-align: right;
+  }
+  .bubble strong { color: #E65100; }
+
+  /* Botões de opção */
+  .options {
+    display: flex; flex-direction: column; gap: 6px;
+    align-self: flex-start; max-width: 78%;
+    animation: fadeIn .15s ease;
+  }
+  .opt-btn {
+    background: #17212b; border: 1px solid #2b5278;
+    color: #e8e8e8; border-radius: 10px;
+    padding: 9px 14px; font-size: 13px;
+    cursor: pointer; text-align: left; transition: background .15s;
+  }
+  .opt-btn:hover { background: #2b5278; }
+  .opt-btn.selected { background: #2b5278; border-color: #E65100; }
+
+  /* Upload foto */
+  .upload-area {
+    align-self: flex-start; max-width: 78%;
+    animation: fadeIn .15s ease;
+  }
+  .upload-label {
+    display: inline-block; background: #17212b;
+    border: 1.5px dashed #2b5278; border-radius: 10px;
+    padding: 12px 18px; cursor: pointer; font-size: 13px; color: #8a8a8a;
+    transition: border-color .15s;
+  }
+  .upload-label:hover { border-color: #E65100; color: #E65100; }
+  #fotoInput { display: none; }
+  .preview-img { max-width: 220px; border-radius: 10px; margin-top: 6px; display: block; }
+
+  /* ── Input bar ── */
+  .input-bar {
+    background: #17212b;
+    padding: 10px 12px;
+    display: flex; gap: 8px; align-items: center;
+    border-top: 1px solid #0e1621;
+    flex-shrink: 0;
+  }
+  .input-bar input {
+    flex: 1; background: #0e1621; border: none; border-radius: 20px;
+    padding: 10px 16px; color: #fff; font-size: 14px; outline: none;
+  }
+  .input-bar input::placeholder { color: #5a6a7a; }
+  .send-btn {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #E65100; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .send-btn svg { fill: #fff; }
+  .send-btn:hover { background: #bf360c; }
+
+  /* Typing indicator */
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 8px 14px;
+    background: #17212b; border-radius: 16px; border-bottom-left-radius: 4px; }
+  .typing span { width: 7px; height: 7px; background: #5a6a7a; border-radius: 50%;
+    animation: bounce 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+
+  /* Modal relatório */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #17212b; border-radius: 14px; padding: 24px;
+    width: 90%; max-width: 360px; text-align: center;
+  }
+  .modal h2 { font-size: 16px; margin-bottom: 16px; color: #E65100; }
+  .modal .dl-btn {
+    display: block; width: 100%; margin-bottom: 10px;
+    background: #2b5278; border: none; color: #fff;
+    border-radius: 10px; padding: 12px; font-size: 14px;
+    cursor: pointer; font-weight: 600; text-decoration: none;
+  }
+  .modal .dl-btn:hover { background: #E65100; }
+  .modal .close-btn {
+    margin-top: 6px; background: none; border: none;
+    color: #8a8a8a; cursor: pointer; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="avatar">LD</div>
+  <div class="header-info">
+    <div class="name">Lançador de Despesas</div>
+    <div class="status">● online</div>
+  </div>
+  <div class="header-actions">
+    <button class="btn-report" onclick="abrirModal()">📊 Relatório</button>
+  </div>
+</div>
+
+<!-- Chat -->
+<div class="chat" id="chat"></div>
+
+<!-- Input -->
+<div class="input-bar">
+  <input type="text" id="textInput" placeholder="Digite uma mensagem..." autocomplete="off" />
+  <button class="send-btn" onclick="enviarTexto()">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+  </button>
+</div>
+
+<!-- Modal relatório -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2>📊 BAIXAR RELATÓRIO</h2>
+    <a class="dl-btn" href="/relatorio/excel" download>⬇ Excel (.xlsx)</a>
+    <a class="dl-btn" href="/relatorio/pdf" download>⬇ PDF</a>
+    <button class="close-btn" onclick="fecharModal()">Fechar</button>
+  </div>
+</div>
+
+<script>
+const OBRAS = {{ obras | tojson }};
+const TIPOS = {{ tipos | tojson }};
+
+const chat = document.getElementById("chat");
+const textInput = document.getElementById("textInput");
+
+let estado = "NOME";
+let dados = {};
+
+function agora() {
+  return new Date().toLocaleTimeString("pt-BR", {hour:"2-digit",minute:"2-digit"});
+}
+
+function addBubble(texto, lado, html=false) {
+  const div = document.createElement("div");
+  div.className = `bubble ${lado}`;
+  if (html) div.innerHTML = texto + `<div class="time">${agora()}</div>`;
+  else div.innerHTML = escapeHtml(texto) + `<div class="time">${agora()}</div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function escapeHtml(t) {
+  return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function typing(ms=700) {
+  return new Promise(resolve => {
+    const t = document.createElement("div");
+    t.className = "typing";
+    t.innerHTML = "<span></span><span></span><span></span>";
+    chat.appendChild(t);
+    chat.scrollTop = chat.scrollHeight;
+    setTimeout(() => { t.remove(); resolve(); }, ms);
+  });
+}
+
+function addOpcoes(lista, callback) {
+  const wrap = document.createElement("div");
+  wrap.className = "options";
+  lista.forEach(op => {
+    const btn = document.createElement("button");
+    btn.className = "opt-btn";
+    btn.textContent = op;
+    btn.onclick = () => {
+      wrap.querySelectorAll(".opt-btn").forEach(b => b.disabled = true);
+      btn.classList.add("selected");
+      addBubble(op, "user");
+      callback(op);
+    };
+    wrap.appendChild(btn);
+  });
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function addUpload() {
+  const wrap = document.createElement("div");
+  wrap.className = "upload-area";
+  wrap.innerHTML = `
+    <label class="upload-label" for="fotoInput">📎 Toque para anexar foto da nota fiscal</label>
+    <input type="file" id="fotoInput" accept="image/*" capture="environment">
+  `;
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+
+  document.getElementById("fotoInput").onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Mostra preview
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = document.createElement("img");
+      img.src = ev.target.result;
+      img.className = "preview-img";
+      wrap.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+
+    addBubble("📷 Foto enviada", "user");
+    wrap.querySelector("input").disabled = true;
+
+    await typing(1200);
+
+    // Envia para o servidor
+    const formData = new FormData();
+    formData.append("foto", file);
+    const resp = await fetch("/upload-imagem", { method: "POST", body: formData });
+    const result = await resp.json();
+
+    dados.imagem_path = result.imagem_path || "";
+
+    if (result.dados && result.dados.tipo) {
+      // Preenche automaticamente o que a IA extraiu
+      addBubble(`✅ Dados extraídos da imagem:\n<strong>TIPO:</strong> ${result.dados.tipo || "-"}\n<strong>VALOR:</strong> R$ ${result.dados.valor || "-"}\n<strong>DESCRIÇÃO:</strong> ${result.dados.descricao || "-"}`, "bot", true);
+      if (result.dados.tipo) dados.tipo = result.dados.tipo;
+      if (result.dados.valor) dados.valor = result.dados.valor;
+      if (result.dados.descricao) dados.descricao = result.dados.descricao;
+      await proxima();
+    } else {
+      addBubble("Imagem salva! Vamos preencher os dados manualmente.", "bot");
+      await proxima();
+    }
+  };
+}
+
+async function proxima() {
+  await typing();
+  if (!dados.tipo) {
+    addBubble("QUAL O TIPO DE PAGAMENTO?", "bot");
+    addOpcoes(TIPOS, async (v) => { dados.tipo = v; await proxima(); });
+    estado = "TIPO";
+    return;
+  }
+  if (!dados.valor) {
+    addBubble("💰 QUAL O VALOR? (ex: 1.500,00)", "bot");
+    estado = "VALOR";
+    return;
+  }
+  if (!dados.descricao) {
+    addBubble("📝 QUAL A DESCRIÇÃO COMPLETA DO SERVIÇO/MATERIAL/EQUIPAMENTO?", "bot");
+    estado = "DESCRICAO";
+    return;
+  }
+  if (!dados.obra) {
+    addBubble("🏗️ AONDE FOI EMPREGADO OU PRESTADO?", "bot");
+    addOpcoes(OBRAS, async (v) => { dados.obra = v; await proxima(); });
+    estado = "OBRA";
+    return;
+  }
+  if (!dados.pix) {
+    addBubble("💳 QUAL A CHAVE PIX PARA PAGAMENTO?", "bot");
+    estado = "PIX";
+    return;
+  }
+  if (!dados.whatsapp_comprovante) {
+    addBubble("📱 QUAL O NÚMERO DO WHATSAPP PARA ENVIO DO COMPROVANTE?", "bot");
+    estado = "WHATSAPP";
+    return;
+  }
+  // Resumo + confirmação
+  estado = "CONFIRMA";
+  addBubble(
+    `📋 <strong>RESUMO DO LANÇAMENTO</strong><br><br>` +
+    `<strong>NOME:</strong> ${dados.nome}<br>` +
+    `<strong>TELEFONE:</strong> ${dados.telefone}<br>` +
+    `<strong>TIPO:</strong> ${dados.tipo}<br>` +
+    `<strong>VALOR:</strong> R$ ${dados.valor}<br>` +
+    `<strong>DESCRIÇÃO:</strong> ${dados.descricao}<br>` +
+    `<strong>OBRA:</strong> ${dados.obra}<br>` +
+    `<strong>PIX:</strong> ${dados.pix}<br>` +
+    `<strong>WHATSAPP:</strong> ${dados.whatsapp_comprovante}`,
+    "bot", true
+  );
+  await typing(400);
+  addOpcoes(["✅ CONFIRMAR", "❌ CANCELAR"], async (v) => {
+    if (v.includes("CONFIRMAR")) {
+      await salvar();
+    } else {
+      addBubble("Lançamento cancelado. Use /start para recomeçar.", "bot");
+      estado = "FIM";
+    }
+  });
+}
+
+async function salvar() {
+  await typing();
+  const resp = await fetch("/salvar", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(dados),
+  });
+  const result = await resp.json();
+  if (result.ok) {
+    addBubble("✅ LANÇAMENTO REGISTRADO COM SUCESSO! Obrigado.", "bot");
+    addBubble("Para lançar outro, atualize a página.", "bot");
+  } else {
+    addBubble("❌ Erro ao salvar. Tente novamente.", "bot");
+  }
+  estado = "FIM";
+}
+
+function enviarTexto() {
+  const txt = textInput.value.trim();
+  if (!txt) return;
+  textInput.value = "";
+
+  if (estado === "FIM") return;
+
+  addBubble(txt, "user");
+
+  if (estado === "NOME") {
+    dados.nome = txt.toUpperCase();
+    typing().then(() => {
+      addBubble("📱 QUAL É O SEU NÚMERO DE TELEFONE (com DDD)?", "bot");
+      estado = "TELEFONE";
+    });
+    return;
+  }
+  if (estado === "TELEFONE") {
+    dados.telefone = txt;
+    typing().then(() => {
+      addBubble("ENVIE UMA FOTO DA NOTA FISCAL/COMPROVANTE OU ESCOLHA O TIPO DE PAGAMENTO:", "bot");
+      addUpload();
+      addOpcoes(TIPOS, async (v) => { dados.tipo = v; await proxima(); });
+      estado = "TIPO";
+    });
+    return;
+  }
+  if (estado === "VALOR")    { dados.valor = txt;    proxima(); return; }
+  if (estado === "DESCRICAO"){ dados.descricao = txt; proxima(); return; }
+  if (estado === "PIX")      { dados.pix = txt;       proxima(); return; }
+  if (estado === "WHATSAPP") { dados.whatsapp_comprovante = txt; proxima(); return; }
+}
+
+textInput.addEventListener("keydown", e => { if (e.key === "Enter") enviarTexto(); });
+
+function abrirModal()  { document.getElementById("modalOverlay").classList.add("open"); }
+function fecharModal() { document.getElementById("modalOverlay").classList.remove("open"); }
+document.getElementById("modalOverlay").addEventListener("click", e => {
+  if (e.target === document.getElementById("modalOverlay")) fecharModal();
+});
+
+// Inicia conversa
+(async () => {
+  await typing(600);
+  addBubble("👷 BEM-VINDO AO LANÇADOR DE DESPESAS!", "bot");
+  await typing(500);
+  addBubble("QUAL É O SEU NOME COMPLETO?", "bot");
+  estado = "NOME";
+})();
+</script>
+</body>
+</html>
