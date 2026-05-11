@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -12,22 +13,24 @@ from telegram.ext import (
 )
 from database import init_db, inserir_pagamento
 from vision import extrair_dados_imagem, salvar_imagem
-from report import gerar_excel, agendar_relatorio_sexta
+from report import gerar_excel, gerar_pdf, enviar_relatorio_email, agendar_relatorio_sexta
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Estados da conversa
 (
+    AGUARDA_NOME,
+    AGUARDA_TELEFONE,
     INICIO,
     AGUARDA_TIPO,
     AGUARDA_VALOR,
     AGUARDA_DESCRICAO,
     AGUARDA_OBRA,
     AGUARDA_PIX,
-    AGUARDA_WHATSAPP,
+    AGUARDA_WHATSAPP_COMPROVANTE,
     CONFIRMA,
-) = range(8)
+) = range(10)
 
 OBRAS = [
     "OBRA POSTO GOL",
@@ -41,46 +44,64 @@ ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 
 
 def teclado_tipos():
-    botoes = [[InlineKeyboardButton(t, callback_data=f"tipo:{t}")] for t in TIPOS]
-    return InlineKeyboardMarkup(botoes)
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(t, callback_data=f"tipo:{t}")] for t in TIPOS]
+    )
 
 
 def teclado_obras():
-    botoes = [[InlineKeyboardButton(o, callback_data=f"obra:{o}")] for o in OBRAS]
-    return InlineKeyboardMarkup(botoes)
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(o, callback_data=f"obra:{o}")] for o in OBRAS]
+    )
 
 
 def teclado_confirma():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ CONFIRMAR", callback_data="confirmar"),
-            InlineKeyboardButton("❌ CANCELAR", callback_data="cancelar"),
-        ]
-    ])
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ CONFIRMAR", callback_data="confirmar"),
+        InlineKeyboardButton("❌ CANCELAR", callback_data="cancelar"),
+    ]])
 
 
 def resumo(ctx) -> str:
     d = ctx.user_data
     return (
         f"📋 *RESUMO DO LANÇAMENTO*\n\n"
+        f"*NOME:* {d.get('nome', '-')}\n"
+        f"*TELEFONE:* {d.get('telefone', '-')}\n"
         f"*TIPO:* {d.get('tipo', '-')}\n"
         f"*VALOR:* R$ {d.get('valor', '-')}\n"
         f"*DESCRIÇÃO:* {d.get('descricao', '-')}\n"
         f"*OBRA:* {d.get('obra', '-')}\n"
         f"*PIX:* {d.get('pix', '-')}\n"
-        f"*WHATSAPP:* {d.get('whatsapp', '-')}\n"
+        f"*WHATSAPP COMPROVANTE:* {d.get('whatsapp_comprovante', '-')}\n"
     )
 
 
 # ──────────────────────────────────────────────
-# /start
+# /start — pede nome
 # ──────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     await update.message.reply_text(
         "👷 *BEM-VINDO AO LANÇADOR DE DESPESAS!*\n\n"
-        "ENVIE UMA FOTO DA NOTA FISCAL OU COMPROVANTE,\n"
-        "OU ESCOLHA O TIPO DE PAGAMENTO ABAIXO:",
+        "QUAL É O SEU *NOME COMPLETO*?",
+        parse_mode="Markdown",
+    )
+    return AGUARDA_NOME
+
+
+async def receber_nome(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["nome"] = update.message.text.strip().upper()
+    await update.message.reply_text("📱 QUAL É O SEU *NÚMERO DE TELEFONE* (com DDD)?",
+                                    parse_mode="Markdown")
+    return AGUARDA_TELEFONE
+
+
+async def receber_telefone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["telefone"] = update.message.text.strip()
+    await update.message.reply_text(
+        "ENVIE UMA *FOTO DA NOTA FISCAL/COMPROVANTE*\n"
+        "OU ESCOLHA O TIPO DE PAGAMENTO:",
         parse_mode="Markdown",
         reply_markup=teclado_tipos(),
     )
@@ -88,32 +109,37 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────
-# Recebeu foto
+# Recebeu foto (nota fiscal)
 # ──────────────────────────────────────────────
 async def receber_foto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🔍 ANALISANDO A IMAGEM, AGUARDE...")
+    # Se ainda não temos nome, pede primeiro
+    if not ctx.user_data.get("nome"):
+        await update.message.reply_text(
+            "ANTES DE CONTINUAR, QUAL É O SEU *NOME COMPLETO*?",
+            parse_mode="Markdown",
+        )
+        return AGUARDA_NOME
 
+    msg = await update.message.reply_text("🔍 ANALISANDO A IMAGEM, AGUARDE...")
     photo = update.message.photo[-1]
     file = await ctx.bot.get_file(photo.file_id)
-    imagem_bytes = await file.download_as_bytearray()
+    imagem_bytes = bytes(await file.download_as_bytearray())
 
-    imagem_path = salvar_imagem(bytes(imagem_bytes), update.effective_user.id)
+    imagem_path = salvar_imagem(imagem_bytes, update.effective_user.id)
     ctx.user_data["imagem_path"] = imagem_path
 
     try:
-        dados = extrair_dados_imagem(bytes(imagem_bytes))
+        dados = extrair_dados_imagem(imagem_bytes)
     except Exception as e:
         logger.error(f"Erro na extração de imagem: {e}")
         dados = {}
 
     await msg.delete()
 
-    # Preenche o que foi extraído
     for campo in ("tipo", "valor", "descricao"):
         if dados.get(campo):
             ctx.user_data[campo] = dados[campo]
 
-    # Mostra o que foi extraído e pede confirmação parcial
     extraido = ""
     if dados.get("tipo"):
         extraido += f"*TIPO:* {dados['tipo']}\n"
@@ -124,17 +150,16 @@ async def receber_foto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if extraido:
         await update.message.reply_text(
-            f"✅ *DADOS EXTRAÍDOS DA IMAGEM:*\n\n{extraido}\nVERIFIQUE E CONTINUE:",
+            f"✅ *DADOS EXTRAÍDOS DA IMAGEM:*\n\n{extraido}",
             parse_mode="Markdown",
         )
     else:
         await update.message.reply_text("⚠️ NÃO FOI POSSÍVEL EXTRAIR OS DADOS. PREENCHA MANUALMENTE.")
 
-    # Avança para o próximo campo faltante
-    return await proximo_campo_faltante(update, ctx)
+    return await _proximo_campo(update, ctx)
 
 
-async def proximo_campo_faltante(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def _proximo_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     d = ctx.user_data
     send = update.message.reply_text if update.message else update.callback_query.message.reply_text
 
@@ -153,24 +178,22 @@ async def proximo_campo_faltante(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     if not d.get("pix"):
         await send("💳 QUAL A CHAVE PIX PARA PAGAMENTO?")
         return AGUARDA_PIX
-    if not d.get("whatsapp"):
+    if not d.get("whatsapp_comprovante"):
         await send("📱 QUAL O NÚMERO DO WHATSAPP PARA ENVIO DO COMPROVANTE?")
-        return AGUARDA_WHATSAPP
+        return AGUARDA_WHATSAPP_COMPROVANTE
 
-    # Tudo preenchido
     await send(resumo(ctx), parse_mode="Markdown", reply_markup=teclado_confirma())
     return CONFIRMA
 
 
 # ──────────────────────────────────────────────
-# Callbacks de botões inline
+# Callbacks botões inline
 # ──────────────────────────────────────────────
 async def callback_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    tipo = query.data.split(":", 1)[1]
-    ctx.user_data["tipo"] = tipo
-    await query.edit_message_text(f"✅ TIPO SELECIONADO: *{tipo}*", parse_mode="Markdown")
+    ctx.user_data["tipo"] = query.data.split(":", 1)[1]
+    await query.edit_message_text(f"✅ TIPO: *{ctx.user_data['tipo']}*", parse_mode="Markdown")
     await query.message.reply_text("💰 QUAL O VALOR? (ex: 1.500,00)")
     return AGUARDA_VALOR
 
@@ -178,9 +201,8 @@ async def callback_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def callback_obra(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    obra = query.data.split(":", 1)[1]
-    ctx.user_data["obra"] = obra
-    await query.edit_message_text(f"✅ OBRA SELECIONADA: *{obra}*", parse_mode="Markdown")
+    ctx.user_data["obra"] = query.data.split(":", 1)[1]
+    await query.edit_message_text(f"✅ OBRA: *{ctx.user_data['obra']}*", parse_mode="Markdown")
     await query.message.reply_text("💳 QUAL A CHAVE PIX PARA PAGAMENTO?")
     return AGUARDA_PIX
 
@@ -189,21 +211,38 @@ async def callback_confirmar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     d = ctx.user_data
+
     inserir_pagamento(
+        nome=d["nome"],
+        telefone=d["telefone"],
         tipo=d["tipo"],
         valor=d["valor"],
         descricao=d["descricao"],
         obra=d["obra"],
         pix=d["pix"],
-        whatsapp=d["whatsapp"],
+        whatsapp_comprovante=d["whatsapp_comprovante"],
         imagem_path=d.get("imagem_path"),
     )
+
     await query.edit_message_text(
         "✅ *LANÇAMENTO REGISTRADO COM SUCESSO!*\n\nOBRIGADO. AS INFORMAÇÕES FORAM SALVAS.",
         parse_mode="Markdown",
     )
+
+    # Envia e-mail em background para não bloquear o bot
+    lancamento = dict(d)
+    threading.Thread(target=_enviar_email_background, args=(lancamento,), daemon=True).start()
+
     ctx.user_data.clear()
     return ConversationHandler.END
+
+
+def _enviar_email_background(lancamento: dict):
+    try:
+        enviar_relatorio_email(novo_lancamento=lancamento)
+        logger.info("E-mail enviado com sucesso.")
+    except Exception as e:
+        logger.error(f"Erro ao enviar e-mail: {e}")
 
 
 async def callback_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -215,7 +254,7 @@ async def callback_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────
-# Handlers de texto para cada campo
+# Handlers de texto
 # ──────────────────────────────────────────────
 async def receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["valor"] = update.message.text.strip()
@@ -232,17 +271,17 @@ async def receber_descricao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def receber_pix(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["pix"] = update.message.text.strip()
     await update.message.reply_text("📱 QUAL O NÚMERO DO WHATSAPP PARA ENVIO DO COMPROVANTE?")
-    return AGUARDA_WHATSAPP
+    return AGUARDA_WHATSAPP_COMPROVANTE
 
 
-async def receber_whatsapp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["whatsapp"] = update.message.text.strip()
+async def receber_whatsapp_comprovante(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["whatsapp_comprovante"] = update.message.text.strip()
     await update.message.reply_text(resumo(ctx), parse_mode="Markdown", reply_markup=teclado_confirma())
     return CONFIRMA
 
 
 # ──────────────────────────────────────────────
-# Comando /relatorio (apenas admin)
+# /relatorio — apenas admin
 # ──────────────────────────────────────────────
 async def cmd_relatorio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
@@ -250,13 +289,15 @@ async def cmd_relatorio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⏳ GERANDO RELATÓRIO...")
     excel_bytes = gerar_excel()
+    pdf_bytes = gerar_pdf()
     from datetime import datetime
-    nome = f"relatorio_{datetime.now().strftime('%d%m%Y')}.xlsx"
-    await update.message.reply_document(
-        document=excel_bytes,
-        filename=nome,
-        caption=f"📊 RELATÓRIO DE PAGAMENTOS PENDENTES — {datetime.now().strftime('%d/%m/%Y')}",
-    )
+    data_str = datetime.now().strftime("%d%m%Y")
+    await update.message.reply_document(document=excel_bytes,
+                                        filename=f"relatorio_{data_str}.xlsx",
+                                        caption="📊 Relatório Excel")
+    await update.message.reply_document(document=pdf_bytes,
+                                        filename=f"relatorio_{data_str}.pdf",
+                                        caption="📄 Relatório PDF")
 
 
 async def cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -280,27 +321,19 @@ def main():
             CallbackQueryHandler(callback_tipo, pattern="^tipo:"),
         ],
         states={
+            AGUARDA_NOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome)],
+            AGUARDA_TELEFONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_telefone)],
             INICIO: [
                 MessageHandler(filters.PHOTO, receber_foto),
                 CallbackQueryHandler(callback_tipo, pattern="^tipo:"),
             ],
-            AGUARDA_TIPO: [
-                CallbackQueryHandler(callback_tipo, pattern="^tipo:"),
-            ],
-            AGUARDA_VALOR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_valor),
-            ],
-            AGUARDA_DESCRICAO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_descricao),
-            ],
-            AGUARDA_OBRA: [
-                CallbackQueryHandler(callback_obra, pattern="^obra:"),
-            ],
-            AGUARDA_PIX: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_pix),
-            ],
-            AGUARDA_WHATSAPP: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_whatsapp),
+            AGUARDA_TIPO: [CallbackQueryHandler(callback_tipo, pattern="^tipo:")],
+            AGUARDA_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_valor)],
+            AGUARDA_DESCRICAO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_descricao)],
+            AGUARDA_OBRA: [CallbackQueryHandler(callback_obra, pattern="^obra:")],
+            AGUARDA_PIX: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_pix)],
+            AGUARDA_WHATSAPP_COMPROVANTE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_whatsapp_comprovante)
             ],
             CONFIRMA: [
                 CallbackQueryHandler(callback_confirmar, pattern="^confirmar$"),

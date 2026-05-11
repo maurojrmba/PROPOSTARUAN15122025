@@ -15,12 +15,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS pagamentos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 data TEXT NOT NULL,
+                nome TEXT NOT NULL,
+                telefone TEXT NOT NULL,
                 tipo TEXT NOT NULL,
                 valor TEXT NOT NULL,
                 descricao TEXT NOT NULL,
                 obra TEXT NOT NULL,
                 pix TEXT NOT NULL,
-                whatsapp TEXT NOT NULL,
+                whatsapp_comprovante TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'PENDENTE',
                 imagem_path TEXT
             )
@@ -28,13 +30,17 @@ def init_db():
         conn.commit()
 
 
-def inserir_pagamento(tipo, valor, descricao, obra, pix, whatsapp, imagem_path=None):
+def inserir_pagamento(nome, telefone, tipo, valor, descricao, obra, pix,
+                      whatsapp_comprovante, imagem_path=None):
     data = datetime.now().strftime("%d/%m/%Y %H:%M")
     with get_connection() as conn:
         conn.execute(
-            """INSERT INTO pagamentos (data, tipo, valor, descricao, obra, pix, whatsapp, status, imagem_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDENTE', ?)""",
-            (data, tipo, valor, descricao, obra, pix, whatsapp, imagem_path),
+            """INSERT INTO pagamentos
+               (data, nome, telefone, tipo, valor, descricao, obra, pix,
+                whatsapp_comprovante, status, imagem_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE', ?)""",
+            (data, nome, telefone, tipo, valor, descricao, obra, pix,
+             whatsapp_comprovante, imagem_path),
         )
         conn.commit()
 
@@ -61,4 +67,7 @@ def marcar_como_pago(pagamento_id):
         conn.commit()
 
 
-COLUNAS = ["ID", "DATA", "TIPO", "VALOR", "DESCRIÇÃO", "OBRA", "PIX", "WHATSAPP", "STATUS", "IMAGEM"]
+COLUNAS = [
+    "ID", "DATA", "NOME", "TELEFONE", "TIPO", "VALOR",
+    "DESCRIÇÃO", "OBRA", "PIX", "WHATSAPP COMPROVANTE", "STATUS", "IMAGEM"
+]
