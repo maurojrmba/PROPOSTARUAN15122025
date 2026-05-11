@@ -229,15 +229,64 @@ async def callback_confirmar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
-    # Envia e-mail em background para não bloquear o bot
+    # Envia relatório no Telegram (admin) + e-mail em background
     lancamento = dict(d)
-    threading.Thread(target=_enviar_email_background, args=(lancamento,), daemon=True).start()
+    app = ctx.application
+    threading.Thread(
+        target=_notificar_background, args=(app, lancamento), daemon=True
+    ).start()
 
     ctx.user_data.clear()
     return ConversationHandler.END
 
 
-def _enviar_email_background(lancamento: dict):
+def _notificar_background(app, lancamento: dict):
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(_enviar_notificacoes(app, lancamento))
+    loop.close()
+
+
+async def _enviar_notificacoes(app, lancamento: dict):
+    from datetime import datetime
+
+    # Monta mensagem resumo para o Telegram do admin
+    texto = (
+        f"🔔 *NOVO LANÇAMENTO REGISTRADO*\n\n"
+        f"*NOME:* {lancamento.get('nome', '-')}\n"
+        f"*TELEFONE:* {lancamento.get('telefone', '-')}\n"
+        f"*TIPO:* {lancamento.get('tipo', '-')}\n"
+        f"*VALOR:* R$ {lancamento.get('valor', '-')}\n"
+        f"*DESCRIÇÃO:* {lancamento.get('descricao', '-')}\n"
+        f"*OBRA:* {lancamento.get('obra', '-')}\n"
+        f"*PIX:* {lancamento.get('pix', '-')}\n"
+        f"*WHATSAPP:* {lancamento.get('whatsapp_comprovante', '-')}\n"
+    )
+
+    try:
+        excel_bytes = gerar_excel()
+        pdf_bytes = gerar_pdf()
+        data_str = datetime.now().strftime("%d%m%Y_%H%M")
+
+        await app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=texto, parse_mode="Markdown")
+        await app.bot.send_document(
+            chat_id=ADMIN_CHAT_ID,
+            document=excel_bytes,
+            filename=f"relatorio_{data_str}.xlsx",
+            caption="📊 Relatório atualizado — Excel",
+        )
+        await app.bot.send_document(
+            chat_id=ADMIN_CHAT_ID,
+            document=pdf_bytes,
+            filename=f"relatorio_{data_str}.pdf",
+            caption="📄 Relatório atualizado — PDF",
+        )
+        logger.info("Relatório enviado no Telegram do admin.")
+    except Exception as e:
+        logger.error(f"Erro ao enviar no Telegram: {e}")
+
+    # E-mail
     try:
         enviar_relatorio_email(novo_lancamento=lancamento)
         logger.info("E-mail enviado com sucesso.")
