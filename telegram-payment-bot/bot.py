@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 from database import init_db, inserir_pagamento
 from vision import extrair_dados_imagem, salvar_imagem
-from report import gerar_excel, gerar_pdf, enviar_relatorio_email, agendar_relatorio_sexta
+from report import gerar_excel, gerar_pdf, agendar_relatorio_sexta
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -286,12 +286,6 @@ async def _enviar_notificacoes(app, lancamento: dict):
     except Exception as e:
         logger.error(f"Erro ao enviar no Telegram: {e}")
 
-    # E-mail
-    try:
-        enviar_relatorio_email(novo_lancamento=lancamento)
-        logger.info("E-mail enviado com sucesso.")
-    except Exception as e:
-        logger.error(f"Erro ao enviar e-mail: {e}")
 
 
 async def callback_cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

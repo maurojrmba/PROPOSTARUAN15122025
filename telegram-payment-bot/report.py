@@ -250,14 +250,6 @@ def agendar_relatorio_sexta(app, admin_chat_id: int):
     scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
 
     async def enviar():
-        # Envia por e-mail
-        try:
-            enviar_relatorio_email()
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Erro ao enviar e-mail na sexta: {e}")
-
-        # Envia também no Telegram para o admin
         excel_bytes = gerar_excel()
         nome = f"relatorio_{datetime.now().strftime('%d%m%Y')}.xlsx"
         await app.bot.send_document(
