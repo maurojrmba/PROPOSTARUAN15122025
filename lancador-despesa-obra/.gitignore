@@ -1,0 +1,6 @@
+.env
+credentials.json
+pagamentos.db
+images/
+__pycache__/
+*.pyc
